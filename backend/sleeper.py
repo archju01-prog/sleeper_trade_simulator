@@ -128,131 +128,6 @@ def _match_user_team_in_league(
     return False, ""
 
 
-def _summarize_league_obj(lg: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract lightweight league metadata from a Sleeper league object without extra HTTP calls."""
-    league_id = str(lg.get("league_id") or "")
-    name = str(lg.get("name") or f"League {league_id}")
-    season = str(lg.get("season") or "")
-    total_rosters = int(lg.get("total_rosters") or 12)
-    status = str(lg.get("status") or "")
-    settings = lg.get("settings") or {}
-    scoring = lg.get("scoring_settings") or {}
-    roster_positions = [str(p) for p in (lg.get("roster_positions") or [])]
-
-    rec = float(scoring.get("rec") or 0.0)
-    ppr_label = "Full PPR" if rec >= 0.9 else ("Half-PPR" if rec >= 0.4 else "Std")
-    qb_count = roster_positions.count("QB") + roster_positions.count("SUPER_FLEX")
-    qb_label = "Superflex" if ("SUPER_FLEX" in roster_positions or qb_count >= 2) else "1QB"
-    is_redraft = int(settings.get("type") or 0) == 0
-    use_median_scoring = int(settings.get("league_average_match") or 0) == 1
-
-    return {
-        "league_id": league_id,
-        "name": name,
-        "season": season,
-        "total_rosters": total_rosters,
-        "status": status,
-        "ppr_label": ppr_label,
-        "qb_label": qb_label,
-        "is_redraft": is_redraft,
-        "use_median_scoring": use_median_scoring,
-    }
-
-
-def lookup_user_leagues(identifier: str, force_refresh: bool = False) -> Dict[str, Any]:
-    """Resolve a Sleeper username or League ID into lightweight league summaries sorted by relevance."""
-    ident = str(identifier or "").strip()
-    if not ident:
-        raise ValueError("Please enter a Sleeper username or League ID.")
-
-    if ident.isdigit():
-        try:
-            league = _cached_get_json(
-                f"sleeper:league:{ident}",
-                f"{SLEEPER_APP_BASE}/league/{ident}",
-                TTL_LEAGUE,
-                force_refresh=force_refresh,
-            )
-        except httpx.HTTPError as exc:
-            raise ValueError(f"Sleeper league '{ident}' not found.") from exc
-        if not isinstance(league, dict) or not league.get("league_id"):
-            raise ValueError(f"Sleeper league '{ident}' not found.")
-        return {
-            "user_id": None,
-            "username": ident,
-            "display_name": ident,
-            "leagues": [_summarize_league_obj(league)],
-        }
-
-    user_info = _cached_get_json(
-        f"sleeper:user:{ident.lower()}",
-        f"{SLEEPER_APP_BASE}/user/{ident}",
-        TTL_LEAGUE,
-        force_refresh=force_refresh,
-    )
-    if not user_info or not user_info.get("user_id"):
-        raise ValueError(f"Sleeper user '{ident}' not found.")
-
-    user_id = str(user_info["user_id"])
-    nfl_state = get_nfl_state(force_refresh=force_refresh)
-    seasons_to_check: List[str] = []
-    for s in [nfl_state["season"], "2026", "2025", "2024"]:
-        if s and s not in seasons_to_check:
-            seasons_to_check.append(s)
-
-    all_leagues: List[Dict[str, Any]] = []
-    seen_ids: Set[str] = set()
-    for season in seasons_to_check:
-        try:
-            leagues = _cached_get_json(
-                f"sleeper:user_leagues:{user_id}:{season}",
-                f"{SLEEPER_APP_BASE}/user/{user_id}/leagues/nfl/{season}",
-                TTL_LEAGUE,
-                force_refresh=force_refresh,
-            )
-        except httpx.HTTPError:
-            leagues = []
-        if not isinstance(leagues, list):
-            continue
-        for lg in leagues:
-            lid = str(lg.get("league_id") or "")
-            if not lid or lid in seen_ids:
-                continue
-            seen_ids.add(lid)
-            all_leagues.append(lg)
-
-    if not all_leagues:
-        raise ValueError(f"No NFL leagues found for Sleeper user '{ident}'.")
-
-    scored: List[Tuple[int, str, Dict[str, Any]]] = []
-    cur_season = str(nfl_state["season"])
-    for lg in all_leagues:
-        summary = _summarize_league_obj(lg)
-        score = 0
-        if summary["season"] == cur_season:
-            score += 200
-        st = summary["status"]
-        if st == "in_season":
-            score += 150
-        elif st in ("post_season", "complete"):
-            score += 80
-        elif st == "drafting":
-            score += 50
-        if summary["is_redraft"]:
-            score += 40
-        scored.append((score, summary["season"], summary))
-
-    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    sorted_summaries = [item[2] for item in scored]
-
-    return {
-        "user_id": user_id,
-        "username": str(user_info.get("username") or ident),
-        "display_name": str(user_info.get("display_name") or user_info.get("username") or ident),
-        "leagues": sorted_summaries,
-    }
-
-
 def resolve_league_id(
     identifier: str = "archju01",
     target_team_name: str = "Pollard McCaff Muscle",
@@ -475,11 +350,9 @@ def _resolve_team_display_name(
 def fetch_league_data(
     league_id: str,
     force_refresh: bool = False,
-    target_team_name: str = "",
+    target_team_name: str = "Pollard McCaff Muscle",
     start_week_override: Optional[int] = None,
     use_median_override: Optional[bool] = None,
-    user_id: Optional[str] = None,
-    username: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Fetch Sleeper league settings, rosters, standings, and remaining schedule."""
     nfl_state = get_nfl_state(force_refresh=force_refresh)
@@ -596,11 +469,8 @@ def fetch_league_data(
 
     # Parse teams & standings
     teams: List[Dict[str, Any]] = []
-    owner_matched_rid: Optional[int] = None
-    name_matched_rid: Optional[int] = None
-    uname_matched_rid: Optional[int] = None
+    my_roster_id: Optional[int] = None
     target_lower = target_team_name.strip().lower()
-    uname_lower = (username or "").strip().lower()
 
     for r in sorted((rosters_raw or []), key=lambda x: int(x["roster_id"])):
         rid = int(r["roster_id"])
@@ -617,24 +487,14 @@ def fetch_league_data(
         starters = [str(p) for p in (r.get("starters") or []) if p and p != "0"]
         taxi = [str(p) for p in (r.get("taxi") or []) if p]
 
-        owner_str = str(r.get("owner_id") or "")
-        co_owners = [str(x) for x in (r.get("co_owners") or [])]
-        owner_match = bool(user_id and (owner_str == str(user_id) or str(user_id) in co_owners))
-        name_match = bool(target_lower and (target_lower in team_name.lower() or target_lower in manager_name.lower()))
-        owner_username = str((user_map.get(owner_str) or {}).get("username") or "").lower()
-        username_match = bool(uname_lower and (uname_lower == manager_name.lower() or uname_lower == owner_username))
-
-        if owner_match and owner_matched_rid is None:
-            owner_matched_rid = rid
-        if name_match and name_matched_rid is None:
-            name_matched_rid = rid
-        if username_match and uname_matched_rid is None:
-            uname_matched_rid = rid
+        is_my_team = target_lower in team_name.lower() or target_lower in manager_name.lower()
+        if is_my_team and my_roster_id is None:
+            my_roster_id = rid
 
         teams.append(
             {
                 "roster_id": rid,
-                "owner_id": owner_str,
+                "owner_id": str(r.get("owner_id") or ""),
                 "team_name": team_name,
                 "manager_name": manager_name,
                 "wins": wins,
@@ -649,10 +509,6 @@ def fetch_league_data(
             }
         )
 
-    my_roster_id: Optional[int] = next(
-        (x for x in (owner_matched_rid, name_matched_rid, uname_matched_rid) if x is not None),
-        None,
-    )
     if my_roster_id is None and teams:
         my_roster_id = teams[0]["roster_id"]
 
@@ -801,6 +657,17 @@ def fetch_custom_projections(
             if pts > 0.0:
                 weekly_projections.setdefault(pid, {})[w] = pts
 
+    # Identify which weeks each NFL team actually plays so injury absences aren't mistaken for byes
+    team_active_weeks: Dict[str, Set[int]] = {}
+    for pid, wk_map in weekly_projections.items():
+        nfl_team = str((players_master.get(pid) or {}).get("team") or "")
+        if not nfl_team or nfl_team == "FA":
+            continue
+        t_wks = team_active_weeks.setdefault(nfl_team, set())
+        for w, pts in wk_map.items():
+            if pts > 1.0:
+                t_wks.add(w)
+
     # Compute ROS totals
     ros_totals: Dict[str, Dict[str, Any]] = {}
     for pid, wk_map in weekly_projections.items():
@@ -810,9 +677,15 @@ def fetch_custom_projections(
         active_games = sum(1 for w in weeks if wk_map.get(w, 0.0) > 0.5)
         reg_games = sum(1 for w in weeks if w < 15 and wk_map.get(w, 0.0) > 0.5)
         po_games = sum(1 for w in weeks if 15 <= w <= 17 and wk_map.get(w, 0.0) > 0.5)
+        nfl_team = str((players_master.get(pid) or {}).get("team") or "")
+        team_wks = team_active_weeks.get(nfl_team, set())
         bye_weeks: List[int] = []
-        if active_games >= 3 and playoff_pts > 0.0:
-            bye_weeks = [w for w in weeks if w < 15 and wk_map.get(w, 0.0) <= 0.05]
+        if active_games >= 3 and playoff_pts > 0.0 and nfl_team and nfl_team != "FA":
+            bye_weeks = [
+                w for w in weeks
+                if w < 15 and wk_map.get(w, 0.0) <= 0.05 and w not in team_wks
+            ]
+        return_week = min((w for w in weeks if wk_map.get(w, 0.0) > 0.5), default=None)
         ros_totals[pid] = {
             "reg_pts": round(reg_pts, 2),
             "playoff_pts": round(playoff_pts, 2),
@@ -823,6 +696,7 @@ def fetch_custom_projections(
             "playoff_ppg": round(playoff_pts / po_games, 2) if po_games > 0 else 0.0,
             "bye_weeks": bye_weeks,
             "next_bye": bye_weeks[0] if bye_weeks else None,
+            "return_week": return_week,
         }
 
     return {

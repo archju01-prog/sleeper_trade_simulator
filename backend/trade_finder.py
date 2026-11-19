@@ -190,10 +190,12 @@ def _select_tradable_assets(
         if pid in must_include:
             forced.append(pid)
             continue
-        if pid in reserve_set:
-            continue
-        ros_pts = float((ros_totals.get(pid) or {}).get("total_pts") or 0.0)
+        ros_entry = ros_totals.get(pid) or {}
+        ros_pts = float(ros_entry.get("total_pts") or 0.0)
+        playoff_pts = float(ros_entry.get("playoff_pts") or 0.0)
         fc = float((fc_values.get(pid) or {}).get("fc_value") or 0.0)
+        if pid in reserve_set and ros_pts <= 15.0 and playoff_pts <= 10.0:
+            continue
         if ros_pts <= 10.0 and fc <= 250.0:
             continue
         score = fc + ros_pts * 20.0

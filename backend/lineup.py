@@ -51,11 +51,11 @@ def solve_weekly_lineup(
     reserve_ids: Optional[Set[str]] = None,
 ) -> Tuple[float, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Solve optimal starting lineup for a single team in a given week."""
-    res_set = reserve_ids or set()
+    # Allow returning IR players to start in future weeks where they have positive projections
+    # (weeks they are out naturally project 0.0 and are excluded by pts > 0.0 below).
+    _ = reserve_ids
     pool: List[Tuple[str, str, float]] = []
     for pid in active_player_ids:
-        if pid in res_set:
-            continue
         pinfo = players_master.get(pid)
         if not pinfo:
             continue
