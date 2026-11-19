@@ -1,0 +1,4 @@
+tornado>=6.1
+httpx>=0.23.0
+numpy>=1.21.0
+scipy>=1.7.0

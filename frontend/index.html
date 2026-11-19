@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sleeper Redraft Trade Simulator &amp; Package Finder</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <div class="brand-icon">TS</div>
+        <div>
+          <div class="brand-title" id="leagueTitle">Sleeper Redraft Trade Simulator</div>
+          <div class="brand-meta" id="leagueMeta">Enter any public Sleeper username to browse your leagues and simulate trades.</div>
+        </div>
+      </div>
+
+      <form class="sync-bar" id="syncForm">
+        <input type="text" id="sleeperUsername" value="" placeholder="Enter Sleeper Username..." title="Sleeper Username or League ID" />
+        <button type="button" class="btn btn-secondary" id="findLeaguesBtn">Find Leagues</button>
+        <select id="leagueSelect" class="league-select-input" title="Select Your Sleeper League" style="min-width:240px;" disabled>
+          <option value="">Enter username &amp; click Find Leagues...</option>
+        </select>
+        <select id="syncStartWeek" title="Start Simulation Week">
+          <option value="">Auto Week</option>
+        </select>
+        <label class="pill-tag" id="medianToggleLabel" style="cursor:pointer;">
+          <input type="checkbox" id="syncMedianToggle" />
+          Median Scoring
+        </label>
+        <label class="pill-tag" style="cursor:pointer;" title="Gives players 85% projection credit on their remaining regular-season bye week and enforces Full-Strength PPG protection">
+          <input type="checkbox" id="syncByeToggle" checked />
+          Bye Protection (85%)
+        </label>
+        <button type="submit" class="btn btn-primary" id="syncBtn" disabled>Sync League</button>
+      </form>
+    </div>
+  </header>
+
+  <main class="main-container">
+    <nav class="nav-tabs" id="mainTabs">
+      <button class="nav-tab active" data-tab="finder">Trade Finder</button>
+      <button class="nav-tab" data-tab="sandbox">Trade Sandbox &amp; Weekly Matchups</button>
+      <button class="nav-tab" data-tab="standings">Standings, Odds &amp; Heatmap</button>
+      <button class="nav-tab" data-tab="values">Player Values, Waivers &amp; Arbitrage</button>
+    </nav>
+
+    <!-- TAB 1: TRADE FINDER -->
+    <section class="tab-panel active" id="tab-finder">
+      <div class="hero-banner" id="heroBanner">
+        <div>
+          <div class="hero-team-label">Your Redraft Contender</div>
+          <div class="hero-team-name" id="heroTeamName">—</div>
+          <div class="hero-record" id="heroRecord">Enter your Sleeper username above and pick a league to load odds...</div>
+        </div>
+        <div class="hero-kpis">
+          <div class="kpi-box">
+            <div class="kpi-label">Exp Final Wins</div>
+            <div class="kpi-val" id="heroExpWins">—</div>
+          </div>
+          <div class="kpi-box">
+            <div class="kpi-label">Playoff %</div>
+            <div class="kpi-val" id="heroPlayoffPct">—</div>
+          </div>
+          <div class="kpi-box">
+            <div class="kpi-label">1st-Rd Bye %</div>
+            <div class="kpi-val" id="heroByePct">—</div>
+          </div>
+          <div class="kpi-box">
+            <div class="kpi-label">Champ %</div>
+            <div class="kpi-val" id="heroChampPct" style="color:var(--green);">—</div>
+          </div>
+        </div>
+        <div>
+          <div class="hero-team-label" style="text-align:right;margin-bottom:6px;">Positional Starter Strength (League Rank)</div>
+          <div class="pos-ranks-grid" id="heroPosRanks"></div>
+        </div>
+      </div>
+
+      <div class="card filters-card">
+        <div class="filters-grid">
+          <div class="form-field">
+            <label for="finderMyTeam">Your Team</label>
+            <select id="finderMyTeam"></select>
+          </div>
+          <div class="form-field">
+            <label for="finderPartner">Target Trade Partner</label>
+            <select id="finderPartner">
+              <option value="">All League Partners</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="finderMode">Optimization Goal</label>
+            <select id="finderMode">
+              <option value="mutual_champ">Mutual Champ % Gain (Nash)</option>
+              <option value="my_champ">Maximize My Champ % (Partner Neutral+)</option>
+              <option value="win_now">Win Now (Remaining Regular Season)</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label>Perceived Partner Edge Window (%): <span id="perceivedRangeReadout">-12% to +20%</span></label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input type="number" id="finderMinPct" value="-12" min="-40" max="30" step="1" style="width:80px;" />
+              <span style="color:var(--text-dim);">to</span>
+              <input type="number" id="finderMaxPct" value="20" min="-20" max="60" step="1" style="width:80px;" />
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+            <span style="font-size:12px;font-weight:600;color:var(--text-muted);">Package Structures (Your Outgoing - Partner Outgoing)</span>
+            <div style="display:flex;gap:8px;">
+              <button type="button" class="btn btn-sm" id="pkgSelectAll">All</button>
+              <button type="button" class="btn btn-sm" id="pkgSelectImbalanced">Imbalanced Only</button>
+            </div>
+          </div>
+          <div class="chip-group" id="packageSizeChips">
+            <span class="chip active" data-size="1-1">1v1</span>
+            <span class="chip active" data-size="2-1">2v1</span>
+            <span class="chip active" data-size="1-2">1v2</span>
+            <span class="chip active" data-size="2-2">2v2</span>
+            <span class="chip active" data-size="3-1">3v1</span>
+            <span class="chip active" data-size="1-3">1v3</span>
+            <span class="chip active" data-size="3-2">3v2</span>
+            <span class="chip active" data-size="2-3">2v3</span>
+            <span class="chip" data-size="3-3">3v3</span>
+          </div>
+        </div>
+
+        <div class="filters-grid" style="margin-top:14px;">
+          <div class="form-field">
+            <label for="finderMustInclude">Must Include Player (Optional)</label>
+            <select id="finderMustInclude">
+              <option value="">Any Player</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="finderExclude">Untouchable / Exclude Player (Optional)</label>
+            <select id="finderExclude">
+              <option value="">None Excluded</option>
+            </select>
+          </div>
+          <div class="form-field" style="grid-column: span 2;">
+            <label>Selected Constraints</label>
+            <div class="chip-group" id="constraintTags" style="min-height:34px;align-items:center;">
+              <span style="font-size:12px;color:var(--text-dim);">No player locks or exclusions active</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="filters-row-2">
+          <div class="checkbox-row">
+            <label><input type="checkbox" id="finderRequireBothChamp" checked /> Require Both Teams Champ % &uarr;</label>
+            <label><input type="checkbox" id="finderAllowSamePos" /> Allow Same-Position 1-for-1</label>
+          </div>
+          <button type="button" class="btn btn-primary" id="runFinderBtn" disabled>Find Viable Trades</button>
+        </div>
+      </div>
+
+      <div class="telemetry-strip" id="finderTelemetry" style="display:none;"></div>
+      <div class="trades-list" id="finderResults">
+        <div class="empty-state">Checking session...</div>
+      </div>
+    </section>
+
+    <!-- TAB 2: TRADE SANDBOX & MATCHUPS -->
+    <section class="tab-panel" id="tab-sandbox">
+      <div class="sandbox-layout">
+        <div class="card">
+          <div class="form-field">
+            <label for="sandboxTeamA">Side A (Your Team)</label>
+            <select id="sandboxTeamA"></select>
+          </div>
+          <div style="margin-top:8px;font-size:12px;color:var(--text-muted);" id="sandboxSelectedAInfo">Click players below to add to Side A's outgoing package.</div>
+          <div class="roster-picker-list" id="sandboxRosterA"></div>
+        </div>
+
+        <div class="card">
+          <div class="form-field">
+            <label for="sandboxTeamB">Side B (Trade Partner)</label>
+            <select id="sandboxTeamB"></select>
+          </div>
+          <div style="margin-top:8px;font-size:12px;color:var(--text-muted);" id="sandboxSelectedBInfo">Click players below to add to Side B's outgoing package.</div>
+          <div class="roster-picker-list" id="sandboxRosterB"></div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;">
+        <div id="sandboxSummaryLine" style="font-size:13.5px;font-weight:600;color:var(--text-muted);">Select at least one player on each side to simulate.</div>
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="btn" id="sandboxClearBtn">Clear Selection</button>
+          <button type="button" class="btn btn-primary" id="sandboxEvalBtn">Run 5,000-Sim Evaluation</button>
+        </div>
+      </div>
+
+      <div id="sandboxResults"></div>
+    </section>
+
+    <!-- TAB 3: STANDINGS, ODDS & POSITIONAL HEATMAP -->
+    <section class="tab-panel" id="tab-standings">
+      <div class="card" style="margin-bottom:18px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div>
+            <h3 style="margin:0;font-size:16px;">Simulated Standings &amp; Playoff/Championship Odds</h3>
+            <div style="font-size:12px;color:var(--text-muted);">Click any team row to inspect full roster &amp; remaining schedule.</div>
+          </div>
+          <span class="pill-tag" id="standingsSimBadge">5,000 CRN Simulations</span>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table" id="standingsTable"></table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="margin-bottom:12px;">
+          <h3 style="margin:0;font-size:16px;">Positional Starter Strength Heatmap (Avg Projected Starter PPG)</h3>
+          <div style="font-size:12px;color:var(--text-muted);">Spot complementary trade partners: green = top-4 surplus, red/pink = bottom-4 need.</div>
+        </div>
+        <div class="data-table-wrap">
+          <table class="data-table" id="heatmapTable"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: VALUES, WAIVERS & ARBITRAGE -->
+    <section class="tab-panel" id="tab-values">
+      <div class="sub-grid-2">
+        <div class="card" id="waiverCalibrationCard">
+          <h3 style="margin:0 0 10px;font-size:16px;">League-Calibrated Waiver Adjustment</h3>
+          <div id="waiverCalibrationBody" style="font-size:13px;color:var(--text-muted);"></div>
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--text-dim);">
+            Perceived redraft values powered by <a href="https://fantasycalc.com" target="_blank" rel="noopener noreferrer">FantasyCalc.com</a> (cached 3h). Simulated ROS projections derived from Sleeper weekly stats under your league's custom scoring rules.
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin:0 0 10px;font-size:16px;">Top Unrostered Waiver Wire Pool (VORP-Ranked)</h3>
+          <div class="data-table-wrap" style="max-height:340px;overflow-y:auto;">
+            <table class="data-table" id="topWaiversTable"></table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+          <div>
+            <h3 style="margin:0;font-size:16px;">Sleeper Custom Projections vs. FantasyCalc Perceived Value (Arbitrage)</h3>
+            <div style="font-size:12px;color:var(--text-muted);">Positive Rank Gap = Sleeper custom scoring likes player more than market (Buy-Low). Negative = Sell-High candidate.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <input type="text" id="arbSearch" placeholder="Search player..." style="background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 10px;font-size:12.5px;" />
+            <select id="arbPosFilter" style="background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 10px;font-size:12.5px;">
+              <option value="ALL">All Positions</option>
+              <option value="QB">QB</option>
+              <option value="RB">RB</option>
+              <option value="WR">WR</option>
+              <option value="TE">TE</option>
+            </select>
+            <select id="arbOwnerFilter" style="background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 10px;font-size:12.5px;">
+              <option value="ALL">All Players</option>
+              <option value="OTHER">Other Teams (Trade Targets)</option>
+              <option value="MINE">My Roster (Sell-High Check)</option>
+              <option value="WAIVER">Unrostered Waivers</option>
+            </select>
+          </div>
+        </div>
+        <div class="data-table-wrap" style="max-height:520px;overflow-y:auto;">
+          <table class="data-table" id="arbitrageTable"></table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- TEAM INSPECTOR MODAL -->
+  <div class="modal-overlay" id="teamModal">
+    <div class="modal-box">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <h3 style="margin:0;" id="teamModalTitle">Team Roster</h3>
+        <button type="button" class="btn btn-sm" id="teamModalClose">Close</button>
+      </div>
+      <div id="teamModalBody"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
